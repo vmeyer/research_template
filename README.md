@@ -149,15 +149,58 @@ research-toolkit/
 | Claude Code (plugin) | `claude --plugin-dir .` → `/research-toolkit:research-and-summarize` |
 | Claude Code (standalone) | Clone repo → `/research-and-summarize` |
 | Gemini CLI | Clone repo, skills auto-detected |
-| GitHub Copilot | Clone repo, prompts auto-detected |
+| GitHub Copilot CLI | Clone repo, prompts auto-detected (see web-tool requirement below) |
+
+### Harness adapters & capability preflight
+
+Tool names differ per harness, so the pipeline is written against four
+**canonical capabilities** — `web_search`, `web_fetch`, `read`, `write` — that
+each harness adapter maps to native tool names. The mappings live in
+[`contract/capabilities.py`](contract/capabilities.py) and are documented in
+[`references/capability-model.md`](references/capability-model.md),
+[`references/adapter-claude-code.md`](references/adapter-claude-code.md), and
+[`references/adapter-copilot-cli.md`](references/adapter-copilot-cli.md).
+
+The researcher and verifier roles dispatch differently per harness:
+
+| Harness | Researcher / verifier dispatch | Web access | Who writes sidecars |
+|---------|-------------------------------|------------|---------------------|
+| Claude Code | custom `researcher-1`/`verifier-1` (`WebSearch, WebFetch, Read, Write`) | native | the worker |
+| Copilot CLI | built-in **`research`** agent (`agent_type: research`) | native (`web_fetch` + `web_search` via its github-mcp toolset) | the orchestrator (the `research` agent has no write tool) |
+
+On Copilot CLI, run it with `copilot --agent=research --autopilot --allow-all`
+(or `/allow-all` + `/autopilot` + `/research …` interactively).
+
+Before any research runs, the orchestrator runs a **two-layer capability
+preflight**: static name resolution
+(`python -m contract.capabilities <platform> <registered_tool> ...`) **plus a
+live probe** that actually calls `web_search`, `web_fetch`, and a write/read
+round-trip. If any required capability does not execute, the run is **BLOCKED
+before any artifact is written** — no `curl`, parent-agent, other-agent, or
+fabricated-source fallback. A search-less run is not an acceptable degradation
+for a triangulation pipeline.
+
+> **Why not a custom Copilot agent for web search?** You can — but `web_search`
+> is the github-mcp tool `github-mcp-server-web_search`, which only registers
+> when the agent engages the github-mcp-server (by declaring `github/*` tools, as
+> the built-in `research` agent does). A custom agent that declares a bare
+> `web_search` without github/* tools gets only `web_fetch`. Rather than
+> re-declare the github-mcp toolset, the toolkit uses the ready-made `research`
+> agent.
+>
+> **URL permissions are not capabilities.** `--allow-all-urls` / `/allow-all`
+> only widen which URLs an *existing* web tool may reach; they never provision a
+> missing tool.
 
 ### Cross-harness mirrors
 
 The canonical v3 sources live in `agents/`, `skills/`, `commands/`, `contract/`,
-and `references/`, and are mirrored into `.claude/` for Claude Code. The other
-harness mirrors — `.gemini/`, `.github/`, `.vscode/`, `.agent/`, and `.agents/` —
-are **not** updated to v3 in this release. They continue to track the v2 pipeline
-until a separate cross-harness sync is performed.
+and `references/`, and are mirrored into `.claude/` for Claude Code. The Copilot
+CLI entrypoint (`.github/prompts/`) carries the adapter-selection and capability
+preflight so a Copilot run BLOCKS correctly when web tools are missing. The
+remaining harness mirrors — `.gemini/`, `.vscode/`, `.agent/`, and `.agents/` —
+are **not** updated to the full v3 pipeline in this release and continue to track
+v2 until a separate cross-harness sync is performed.
 
 ## License
 
